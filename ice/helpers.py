@@ -236,3 +236,25 @@ def state_from_landmark(
         f"output/likely_{state_abbrev.lower()}_arrests.csv"
     )
     return likely_state
+
+
+def get_percent(df, group_col, time_col=None):
+    if time_col is None:
+        df = df.with_columns(pl.lit(0).alias("dummy"))
+        time_col = "dummy"
+    return (
+        df.group_by([time_col, group_col])
+        .agg(pl.count())
+        .with_columns(
+            percent=(pl.col("count") / pl.col("count").sum()).over(time_col).round(3)
+            * 100,
+        )
+        .pivot(index=group_col, columns=time_col, values=["percent"])
+    )
+
+
+def is_trump(df):
+    return (df["arrest_year"] > 2025) | (
+        (df["arrest_year"] == 2025)
+        & ~((df["arrest_month"] == 1) & (df["arrest_day"] < 20))
+    )
