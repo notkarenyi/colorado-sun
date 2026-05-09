@@ -199,6 +199,19 @@ def read_data(
     return df
 
 
+def read_calls_data(dataset):
+    df = pl.read_csv(get_latest("data", dataset))
+    df = (
+        df.select([pl.col(col).str.strip_chars() for col in df.columns])
+        .with_columns(DATE=pl.col("DATE").str.replace_all(" ", "-"))
+        .with_columns(
+            DATE=pl.col("DATE").str.strptime(pl.Date, format="%b-%d-%Y"),
+            TIME=pl.col("TIME").str.strptime(pl.Time, format="%H:%M"),
+        )
+    )
+    return df
+
+
 def read_historical_data(dataset, header_row, schema_overrides=None, drop_cols=[]):
     """
     Read a historical dataset with irregular formatting.
