@@ -339,10 +339,9 @@ def get_percent(df, group_col, time_col=None):
         time_col = "dummy"
     return (
         df.group_by([time_col, group_col])
-        .agg(pl.count())
+        .agg(pl.len())
         .with_columns(
-            percent=(pl.col("count") / pl.col("count").sum()).over(time_col).round(3)
-            * 100,
+            percent=(pl.col("len") / pl.col("len").sum()).over(time_col).round(3) * 100,
         )
         .sort(time_col)
         .pivot(index=group_col, columns=time_col, values=["percent"])
