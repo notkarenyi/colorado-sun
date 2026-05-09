@@ -209,10 +209,27 @@ def read_calls_data(dataset):
     df = pl.read_csv(get_latest("data", dataset))
     df = (
         df.select([pl.col(col).str.strip_chars() for col in df.columns])
-        .with_columns(DATE=pl.col("DATE").str.replace_all(" ", "-"))
+        .with_columns(
+            DATE=pl.col("DATE").str.replace_all(" ", "-"),
+            CALLTYPE=pl.col("CALLTYPE")
+            .str.replace(r"\d[A-Z\d]+ ", "")
+            .str.replace(r"- *", " ")
+            .str.replace(r"  +", " ")
+            .str.replace(r"SEX ", "SEXUAL ")
+            .str.replace(r"\bSSIST", "ASSIST")
+            .str.replace(r"\bSSAULT", "ASSAULT")
+            .str.replace(r"/SEIZE", "/SEIZURES")
+            .str.replace(r"/FAINT\b", "/FAINTING")
+            .str.replace(r"PSYCH/", "PSYCHIATRIC/")
+            .str.replace(r"CONVULS/", "CONVULSIONS/")
+            .str.replace(r"CONVULSNS/", "CONVULSIONS/")
+            .str.replace(r"PROBS/", "PROBLEMS/")
+            .str.strip_chars(),
+        )
         .with_columns(
             DATE=pl.col("DATE").str.strptime(pl.Date, format="%b-%d-%Y"),
             TIME=pl.col("TIME").str.strptime(pl.Time, format="%H:%M"),
+            call_type_short=pl.col("CALLTYPE").str.replace(r" .*", ""),
         )
     )
     print(df.shape)
