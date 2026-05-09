@@ -2,6 +2,8 @@ import os
 import re
 
 import polars as pl
+from IPython.display import display
+from tqdm import tqdm
 
 fbi_violent_crime = [
     # '',
@@ -153,6 +155,10 @@ co_facilities = [
 
 
 def get_latest(dir, search_term):
+    """
+    Get the latest file in a directory that matches a search term.
+    """
+
     files = os.listdir(dir)
     matching_files = [os.path.join(dir, f) for f in files if re.search(search_term, f)]
     if not matching_files:
@@ -162,27 +168,116 @@ def get_latest(dir, search_term):
     return latest_file
 
 
-def detect_duplicates(
+def read_data(
+    dataset, schema_overrides=None, header_row=0, rename_map={}, drop_cols=[]
+):
+    """
+    Read a Deportation Data Project dataset.
+
+    :param dataset: the text pattern to match for the dataset of interest (e.g. "arrests")
+    :param schema_overrides: a dictionary of column names to polars data types to override the default type inference
+    """
+
+    sheets = pl.read_excel(
+        get_latest("data", dataset),
+        sheet_id=0,
+        read_options={"header_row": header_row},
+        schema_overrides=schema_overrides,
+    )
+
+    sheets = {
+        nm: dt.rename({k: v for k, v in rename_map.items() if k in dt.columns})
+        for nm, dt in sheets.items()
+    }
+    for c in drop_cols:
+        sheets = {k: v.drop(c) if c in v.columns else v for k, v in sheets.items()}
+
+    df = pl.concat([v for _, v in sheets.items()])
+    print(df.shape)
+    print(sorted(list(df.schema.keys())))
+    display(df.head(3))
+    return df
+
+
+def read_historical_data(dataset, header_row, schema_overrides=None, drop_cols=[]):
+    """
+    Read a historical dataset with irregular formatting.
+
+    :param dataset: the text pattern to match for the dataset of interest (e.g. "arrests")
+    :param header_row: the row number (0-indexed) that contains the column names
+    :param schema_overrides: a dictionary of column names to polars data types to override the default type inference
+    :param drop_cols: a list of column names to drop from the dataframe
+    """
+
+    files = [f for f in os.listdir("data") if dataset in f]
+    hd = pl.DataFrame()
+    for f in tqdm(files):
+        df = pl.read_excel(
+            os.path.join("data", f),
+            read_options={"header_row": header_row},
+            schema_overrides=schema_overrides,
+        )
+        # print(df.head())
+
+        for c in drop_cols:
+            if c in df.columns:
+                df = df.drop(c)
+        if len(hd.columns):
+            print("Selecting and reordering common columns")
+            df = df.select(hd.columns)
+
+        hd = hd.vstack(df)
+    print(hd.shape)
+    print(sorted(list(hd.schema.keys())))
+    hd.head()
+
+
+def clean_duplicates(
     df,
     id_col="Sequence Number/Unique Identifier",
     datetime_col="Apprehension Date And Time",
 ):
-    df = df.sort([id_col, datetime_col]).with_columns(
-        apprehension_date=pl.col(datetime_col).dt.date().alias("apprehension_date"),
-        arrest_year=pl.col(datetime_col).dt.year().alias("arrest_year"),
-        arrest_month=pl.col(datetime_col).dt.month().alias("arrest_month"),
-        arrest_day=pl.col(datetime_col).dt.day().alias("arrest_day"),
-        apprehension_date_lag=pl.col(datetime_col).shift(1).over(id_col),
-        apprehension_date_diff=(
-            pl.col(datetime_col) - pl.col(datetime_col).shift(1)
-        ).over(id_col),
+    """
+    Remove likely duplicate records based on the ID column and the datetime column. If a "duplicate_likely" column is already present, use that instead of calculating it.
+    """
+
+    if not "duplicate_likely" in df.columns:
+        print("Creating duplicate likely column")
+
+        df = df.sort([id_col, datetime_col]).with_columns(
+            apprehension_date=pl.col(datetime_col).dt.date().alias("apprehension_date"),
+            arrest_year=pl.col(datetime_col).dt.year().alias("arrest_year"),
+            arrest_month=pl.col(datetime_col).dt.month().alias("arrest_month"),
+            arrest_day=pl.col(datetime_col).dt.day().alias("arrest_day"),
+            apprehension_date_lag=pl.col(datetime_col).shift(1).over(id_col),
+            apprehension_date_diff=(
+                pl.col(datetime_col) - pl.col(datetime_col).shift(1)
+            ).over(id_col),
+        )
+
+        df = df.with_columns(
+            duplicate_likely=pl.col("apprehension_date_diff") <= pl.duration(days=1)
+        )
+        df = df.drop("apprehension_date_diff")
+
+        # dummy df
+        keep = df.filter(pl.col(datetime_col).is_null() & pl.col(id_col).is_null())
+    else:
+        # both members of a duplicate set are marked, we must choose one
+        keep = (
+            df.filter(df["duplicate_likely"])
+            .sort([id_col, datetime_col])
+            .unique(subset=[id_col], keep="last")
+        )
+
+    # ensure we are not removing too many NA ID records
+    print(
+        "Records with missing ID:",
+        df.filter(pl.col("duplicate_likely") & pl.col(id_col).is_null()).shape[0],
     )
 
-    df = df.with_columns(
-        duplicate_likely=pl.col("apprehension_date_diff") <= pl.duration(days=1)
-    )
-
-    return df.drop("apprehension_date_diff")
+    df = df.filter(~df["duplicate_likely"]).vstack(keep)
+    return df
 
 
 def confirm_state(
@@ -249,6 +344,7 @@ def get_percent(df, group_col, time_col=None):
             percent=(pl.col("count") / pl.col("count").sum()).over(time_col).round(3)
             * 100,
         )
+        .sort(time_col)
         .pivot(index=group_col, columns=time_col, values=["percent"])
     )
 
