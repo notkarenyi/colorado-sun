@@ -157,6 +157,9 @@ co_facilities = [
 def get_latest(dir, search_term):
     """
     Get the latest file in a directory that matches a search term.
+
+    :param dir: the directory to search
+    :param search_term: the text pattern to match for the file of interest (e.g. "arrests")
     """
 
     files = os.listdir(dir)
@@ -193,6 +196,42 @@ def read_data(
         sheets = {k: v.drop(c) if c in v.columns else v for k, v in sheets.items()}
 
     df = pl.concat([v for _, v in sheets.items()])
+    print(df.shape)
+    print(sorted(list(df.schema.keys())))
+    display(df.head(3))
+    return df
+
+
+def read_calls_data(dataset):
+    """
+    Read 911 calls dataset and process date/time columns.
+    """
+    df = pl.read_csv(get_latest("data", dataset))
+    df = (
+        df.select([pl.col(col).str.strip_chars() for col in df.columns])
+        .with_columns(
+            DATE=pl.col("DATE").str.replace_all(" ", "-"),
+            CALLTYPE=pl.col("CALLTYPE")
+            .str.replace(r"\d[A-Z\d]+ ", "")
+            .str.replace(r"- *", " ")
+            .str.replace(r"  +", " ")
+            .str.replace(r"SEX ", "SEXUAL ")
+            .str.replace(r"\bSSIST", "ASSIST")
+            .str.replace(r"\bSSAULT", "ASSAULT")
+            .str.replace(r"/SEIZE", "/SEIZURES")
+            .str.replace(r"/FAINT\b", "/FAINTING")
+            .str.replace(r"PSYCH/", "PSYCHIATRIC/")
+            .str.replace(r"CONVULS/", "CONVULSIONS/")
+            .str.replace(r"CONVULSNS/", "CONVULSIONS/")
+            .str.replace(r"PROBS/", "PROBLEMS/")
+            .str.strip_chars(),
+        )
+        .with_columns(
+            DATE=pl.col("DATE").str.strptime(pl.Date, format="%b-%d-%Y"),
+            TIME=pl.col("TIME").str.strptime(pl.Time, format="%H:%M"),
+            call_type_short=pl.col("CALLTYPE").str.replace(r" .*", ""),
+        )
+    )
     print(df.shape)
     print(sorted(list(df.schema.keys())))
     display(df.head(3))
@@ -287,6 +326,9 @@ def confirm_state(
     aor_col="apprehension_aor",
     aor_state="apprehension_state",
 ):
+    """
+    Get rows where we are mostly certain that they belong to a certain state because they are designated as being in both the area of responsibility and the state of apprehension.
+    """
     confirmed_state = df[aor_col].str.contains(city) & (df[aor_state] == state_full)
     return confirmed_state
 
@@ -298,10 +340,13 @@ def state_from_docket(
     aor_col="apprehension_aor",
     toa_col="toa_current_duty_site",
 ):
-    likely_state = (
-        # apprehension area of responsibility is denver and the time of apprehension docket office is in CO (not WY, which is also included in the area of responsibility)
-        df[aor_col].str.contains(city)
-        & df[toa_col].str.contains(r", " + state_abbrev + ",?")
+    """
+    Get rows where we are somewhat certain that they belong to a state of interest.
+
+    Requires that the apprehension area of responsibility be as specified AND the time of apprehension docket office is in the specified state (other states may also be included in the area of responsibility)
+    """
+    likely_state = df[aor_col].str.contains(city) & df[toa_col].str.contains(
+        r", " + state_abbrev + ",?"
     )
     print("Likely to be " + state_abbrev, likely_state.sum())
     df.filter(likely_state).write_csv(
@@ -318,13 +363,15 @@ def state_from_landmark(
     aor_col="apprehension_aor",
     landmark_col="apprehension_site_landmark",
 ):
-    likely_state = (
-        # AOR is city and the site landmark ends with state
-        df[aor_col].str.contains(city)
-        & (
-            df[landmark_col].str.ends_with(r", " + state_abbrev)
-            | df[landmark_col].str.ends_with(r", " + state_full)
-        )
+    """
+    Get rows where we are somewhat certain that they belong to a state of interest.
+
+    Requires that the apprehension area of responsibility be as specified AND the time of apprehension landmark is in the specified state (other states may also be included in the area of responsibility)
+    """
+
+    likely_state = df[aor_col].str.contains(city) & (
+        df[landmark_col].str.ends_with(r", " + state_abbrev)
+        | df[landmark_col].str.ends_with(r", " + state_full)
     )
     print("Likely to be " + state_abbrev, likely_state.sum())
     df.filter(likely_state).write_csv(
@@ -334,15 +381,18 @@ def state_from_landmark(
 
 
 def get_percent(df, group_col, time_col=None):
+    """
+    Calculate the percentage of each group within each time period. If time_col is not provided, calculate the overall percentage of each group.
+    """
+
     if time_col is None:
         df = df.with_columns(pl.lit(0).alias("dummy"))
         time_col = "dummy"
     return (
         df.group_by([time_col, group_col])
-        .agg(pl.count())
+        .agg(pl.len())
         .with_columns(
-            percent=(pl.col("count") / pl.col("count").sum()).over(time_col).round(3)
-            * 100,
+            percent=(pl.col("len") / pl.col("len").sum()).over(time_col).round(3) * 100,
         )
         .sort(time_col)
         .pivot(index=group_col, columns=time_col, values=["percent"])
