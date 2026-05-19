@@ -5,6 +5,49 @@ import polars as pl
 from IPython.display import display
 from tqdm import tqdm
 
+violent_call_types = [
+    "ASSAULT",
+    "ASSAULT/SEXUAL",
+    "ARSON",
+    "ROBBERY",
+    "HARASSMENT/THREATS",
+    "LARCENY",
+    "SUICIDE",
+    "POSSIBLY",
+    "SEXUAL",
+    "EX",
+]
+
+sick_call_types = [
+    "BREATHING",
+    "CHEST",
+    "CONVULSIONS/SEIZURES",
+    "DIABETIC",
+    "FALLS",
+    "HEART",
+    "HEMORRHAGE",
+    "INJURY",
+    "MEDICAL",
+    "NURSE",
+    "OVERDOSE/POISONING",
+    "SICK",
+    "STROKE",
+    "UNCONSCIOUS/FAINTING",
+    "TRAUMATIC",
+    "PSYCHIATRIC/MENTAL",
+    "EMD",
+    "EMS1",
+    "EMS2",
+    "EMS4",
+    "RNURSE",
+    "MD",
+    "AB",
+    "ALLERGIES",
+    "ALS",
+    "BLS",
+    "PDEMS2",
+]
+
 fbi_violent_crime = [
     # '',
     "Aggravated Assault - Family-Strongarm",
